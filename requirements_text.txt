@@ -1,0 +1,40 @@
+CV Optimization and Job Application System Workflow
+
+This system outlines the process for automating job application preparation, focusing on CV optimization and supporting document generation.
+1. Job Ingestion and Registration
+Scanning and Sourcing: The program scans a predetermined list of job links and reads job details from PDFs/docs stored in the cloud.
+Identification and Parsing: Each job source is parsed to identify new job listings not present in the database (DB). How do we know a job is already there in database?
+Database Registration: New jobs are registered in a DB table, capturing essential details:
+Job Name/Title
+Location
+Date of Posting
+Company
+Job Details
+Status = ‘new’
+2. Job Description (JD) and Resume Storage
+JD Storage: The JD for each new job is saved in a designated cloud folder (job-descriptions).
+The folder name incorporates the job's unique DB ID and job title of JD.
+The DB table is updated with the cloud link/path to the stored JD.
+Base Resume Storage: A collection of standard CVs is maintained in another cloud folder (base-resumes).
+3. Resume Optimization and Matching Process (Automated)
+Scheduled Scan: The program periodically (e.g., daily at 1 AM) scans the DB for job records with a new status.
+Matching and Scoring: For each pending job:
+The relevant JD is retrieved from job-descriptions.
+The base resume from base-resumes that achieves the highest match score against the JD is selected. How to do this matching?
+Database Update (Matching Results): The DB table is updated with:
+Field-matching information.
+The base-resume match score.
+The status is updated to resume-match-done.
+Potential AI/LLM Assistance: AI/LLM models can be utilized during this process, leveraging job details (location, date, company, description) to enhance the matching logic.
+4. Optimized Document Generation
+Optimized Resume Generation: Using the selected base resume and the JD, the system generates an ATS-ready and professional resume.
+This involves expanding or optimizing the base resume specifically for the JD.
+Focus is placed only on relevant skills and keywords.
+The output only includes content that requires updating based on the JD.
+Storage (Optimized Resume): The optimized resume is stored in the resume-optimized cloud folder. The filename includes My name, the Job Name and Job ID.
+Cover Letter Generation: A job-optimized cover letter is created and stored in the cover-letters cloud folder.
+5. Final Database Updates
+Record Finalization: The DB table is updated with the final application information:
+Updated Status.
+Path to the Optimized Resume.
+Path to the Cover Letter.
