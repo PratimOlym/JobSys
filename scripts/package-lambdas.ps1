@@ -43,6 +43,12 @@ if (-not $SkipLayer) {
             --upgrade `
             -r $ReqFile `
             --quiet --no-cache-dir
+
+        # Cleanup unnecessary files to reduce layer size
+        Write-Host "  Cleaning up layer build..." -ForegroundColor Gray
+        Get-ChildItem -Path "$LayerDir\python" -Include "*.dist-info", "*.egg-info", "tests", "__pycache__" -Recurse | Remove-Item -Recurse -Force
+        # Remove bin directory if it exists
+        if (Test-Path "$LayerDir\python\bin") { Remove-Item -Recurse -Force "$LayerDir\python\bin" }
         
         # Create ZIP with retry
         if (Test-Path $LayerZip) { Remove-Item -Force $LayerZip }

@@ -1,36 +1,123 @@
-"""Google Gemini API client for resume matching and document generation."""
+"""Public LLM facade for JobSys.
+
+This is the single import point for all LLM-powered operations.
+It is a drop-in replacement for ``shared.gemini_client``; every function
+has an identical signature and return type.
+
+Switch providers via the ``LLM_PROVIDER`` environment variable (or AWS SSM):
+    ``gemini``      — Google Gemini  (default)
+    ``openai``      — OpenAI
+    ``huggingface`` — HuggingFace Inference API
+
+Token usage is automatically logged and persisted to DynamoDB after every call.
+"""
 
 import json
 import logging
-from typing import Dict, List
-
-import google.generativeai as genai
+from typing import Dict, List, Optional
 
 from . import config as app_config
+from .llm_provider import LLMProvider
+from .llm_types import LLMResponse, TokenUsage
 from .models import MatchResult
 
 logger = logging.getLogger(__name__)
 
-_model = None
+# ── Provider singleton (lazy) ─────────────────────────────────────────────────
+
+_provider: Optional[LLMProvider] = None
 
 
-# ── Resume Summarization ───────────────────────────────────────────────────────
+def get_provider() -> LLMProvider:
+    """Return the active provider singleton, initialising on first call."""
+    global _provider
+    if _provider is None:
+        _provider = _build_provider()
+    return _provider
+
+
+def _build_provider() -> LLMProvider:
+    """Instantiate the provider selected by configuration."""
+    provider_name = app_config.get_llm_provider()
+    logger.info("Initialising LLM provider: %s", provider_name)
+
+    if provider_name == "openai":
+        from .providers.openai_provider import OpenAIProvider
+        api_key = app_config.get_openai_api_key()
+        model = app_config.get_llm_model("openai")
+        return OpenAIProvider(api_key=api_key, model=model)
+
+    if provider_name == "huggingface":
+        from .providers.huggingface_provider import HuggingFaceProvider
+        api_key = app_config.get_hf_api_key()
+        model = app_config.get_llm_model("huggingface")
+        return HuggingFaceProvider(api_key=api_key, model=model)
+
+    # Default: Gemini
+    from .providers.gemini_provider import GeminiProvider
+    api_key = app_config.get_gemini_api_key()
+    model = app_config.get_llm_model("gemini")
+    return GeminiProvider(api_key=api_key, model=model)
+
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+def _call(prompt: str, operation: str) -> LLMResponse:
+    """Send *prompt* through the active provider, record usage, return response."""
+    provider = get_provider()
+    response = provider.generate(prompt)
+    _record_usage(response, operation)
+    return response
+
+
+def _strip_fences(text: str) -> str:
+    """Remove markdown code fences (``` … ```) that some models add."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        text = text.rsplit("```", 1)[0]
+    return text.strip()
+
+
+def _record_usage(response: LLMResponse, operation: str) -> None:
+    """Log token usage and persist to DynamoDB (best-effort)."""
+    u = response.usage
+    logger.info(
+        "Token usage [%s/%s] op=%s — prompt=%d completion=%d total=%d remaining=%s",
+        response.provider,
+        response.model,
+        operation,
+        u.prompt_tokens,
+        u.completion_tokens,
+        u.total_tokens,
+        u.remaining_tokens if u.remaining_tokens is not None else "N/A",
+    )
+    try:
+        app_config.record_token_usage(
+            usage=u,
+            provider=response.provider,
+            model=response.model,
+            operation=operation,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not persist token usage to DynamoDB: %s", exc)
+
+
+# ── Public API (identical signatures to gemini_client.py) ────────────────────
+
 
 def summarize_resume(resume_name: str, resume_text: str) -> Dict:
-    """Use Gemini to generate a concise, structured summary of a resume.
-
-    The summary is stored alongside the resume and used for fast job matching.
+    """Generate a concise, structured summary of a resume.
 
     Args:
         resume_name: Filename / identifier of the resume.
         resume_text: Full extracted text of the resume.
 
     Returns:
-        A dict with keys: headline, total_experience_years, skills,
+        Dict with keys: resume_name, headline, total_experience_years, skills,
         key_strengths, education, summary_text.
     """
-    model = _get_model()
-
     prompt = f"""You are an expert resume analyst.
 
 Analyze the following resume and produce a concise, structured summary.
@@ -51,18 +138,13 @@ Return ONLY a JSON object with EXACTLY these fields:
 
 Respond with ONLY the JSON object, no other text.
 """
-
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        data = json.loads(text)
+        response = _call(prompt, "summarize_resume")
+        data = json.loads(_strip_fences(response.text))
         data["resume_name"] = resume_name
         return data
     except Exception as e:
-        logger.error(f"Gemini resume summarization failed for '{resume_name}': {e}")
+        logger.error("Resume summarization failed for '%s': %s", resume_name, e)
         return {
             "resume_name": resume_name,
             "headline": "Summary generation failed",
@@ -74,13 +156,10 @@ Respond with ONLY the JSON object, no other text.
         }
 
 
-# ── JD vs Summaries Matching ───────────────────────────────────────────────────
-
-def match_jd_against_summaries(jd_text: str, summaries: List[Dict], job_meta: Dict = None) -> List[Dict]:
-    """Use Gemini to score a JD against a list of resume summaries.
-
-    Sends all summaries in one prompt for efficiency. Returns a ranked list
-    with scores and skill analysis for each resume.
+def match_jd_against_summaries(
+    jd_text: str, summaries: List[Dict], job_meta: Dict = None
+) -> List[Dict]:
+    """Score a JD against a list of resume summaries.
 
     Args:
         jd_text: Full text of the job description.
@@ -88,17 +167,13 @@ def match_jd_against_summaries(jd_text: str, summaries: List[Dict], job_meta: Di
         job_meta: Optional dict with job_title, company, location.
 
     Returns:
-        List of result dicts ordered by overall_score descending. Each dict:
-        resume_name, overall_score, keyword_score, semantic_score,
-        matched_skills, missing_skills, recommendation.
+        List of result dicts ordered by overall_score descending.
     """
     if not summaries:
         return []
 
-    model = _get_model()
     job_meta = job_meta or {}
 
-    # Build a compact representation of each summary for the prompt
     summaries_block = ""
     for i, s in enumerate(summaries, 1):
         summaries_block += f"""
@@ -147,17 +222,12 @@ Important:
 """
 
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        results = json.loads(text)
-        # Sort by overall_score descending
+        response = _call(prompt, "match_jd_against_summaries")
+        results = json.loads(_strip_fences(response.text))
         results.sort(key=lambda x: x.get("overall_score", 0), reverse=True)
         return results
     except Exception as e:
-        logger.error(f"Gemini JD matching failed: {e}")
+        logger.error("JD matching failed: %s", e)
         return [
             {
                 "resume_name": s.get("resume_name", f"Resume_{i}"),
@@ -172,21 +242,8 @@ Important:
         ]
 
 
-def _get_model():
-    """Lazy-initialize the Gemini generative model."""
-    global _model
-    if _model is None:
-        api_key = app_config.get_gemini_api_key()
-        genai.configure(api_key=api_key)
-        model_name = app_config.get_llm_model("gemini")
-        _model = genai.GenerativeModel(model_name)
-    return _model
-
-
-# ── Resume Matching ────────────────────────────────────────────────────────────
-
 def score_resume_vs_jd(resume_text: str, jd_text: str, job_meta: Dict) -> MatchResult:
-    """Use Gemini to semantically score a resume against a job description.
+    """Semantically score a resume against a job description.
 
     Args:
         resume_text: Full text of the base resume.
@@ -196,8 +253,6 @@ def score_resume_vs_jd(resume_text: str, jd_text: str, job_meta: Dict) -> MatchR
     Returns:
         MatchResult with scores and skill analysis.
     """
-    model = _get_model()
-
     prompt = f"""You are an expert ATS (Applicant Tracking System) analyst and career advisor.
 
 Analyze the following resume against the job description and provide a detailed matching assessment.
@@ -228,14 +283,8 @@ Respond with ONLY the JSON object, no other text.
 """
 
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        data = json.loads(text)
-
+        response = _call(prompt, "score_resume_vs_jd")
+        data = json.loads(_strip_fences(response.text))
         return MatchResult(
             resume_name="",  # Filled in by caller
             overall_score=float(data.get("overall_score", 0)),
@@ -246,7 +295,7 @@ Respond with ONLY the JSON object, no other text.
             recommendation=data.get("recommendation", ""),
         )
     except Exception as e:
-        logger.error(f"Gemini scoring failed: {e}")
+        logger.error("Resume scoring failed: %s", e)
         return MatchResult(
             resume_name="",
             overall_score=0,
@@ -256,12 +305,10 @@ Respond with ONLY the JSON object, no other text.
         )
 
 
-# ── Optimized Resume Generation ───────────────────────────────────────────────
-
 def generate_optimized_resume_content(
     base_resume_text: str, jd_text: str, job_meta: Dict, match_result: MatchResult
 ) -> Dict:
-    """Use Gemini to generate optimized resume content tailored to the JD.
+    """Generate optimized resume content tailored to the JD.
 
     Args:
         base_resume_text: Text of the best-matching base resume.
@@ -272,11 +319,9 @@ def generate_optimized_resume_content(
     Returns:
         Dict with structured resume sections ready for DOCX generation.
     """
-    model = _get_model()
-
     prompt = f"""You are an expert resume writer specializing in ATS-optimized resumes.
 
-Your task is to optimize the following base resume for the specific job description below. 
+Your task is to optimize the following base resume for the specific job description below.
 Focus ONLY on relevant skills and keywords. Make the resume ATS-friendly and professional.
 
 ## Job Information
@@ -336,23 +381,17 @@ Respond with ONLY the JSON object, no other text.
 """
 
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        return json.loads(text)
+        response = _call(prompt, "generate_optimized_resume_content")
+        return json.loads(_strip_fences(response.text))
     except Exception as e:
-        logger.error(f"Gemini resume generation failed: {e}")
+        logger.error("Resume generation failed: %s", e)
         raise
 
-
-# ── Cover Letter Generation ───────────────────────────────────────────────────
 
 def generate_cover_letter_content(
     resume_text: str, jd_text: str, job_meta: Dict, user_profile: Dict
 ) -> str:
-    """Use Gemini to generate a tailored cover letter.
+    """Generate a tailored cover letter.
 
     Args:
         resume_text: The optimized resume text.
@@ -363,7 +402,6 @@ def generate_cover_letter_content(
     Returns:
         Cover letter text as a string.
     """
-    model = _get_model()
     user_name = user_profile.get("name", "Applicant")
 
     prompt = f"""You are an expert cover letter writer.
@@ -399,8 +437,8 @@ Write the complete cover letter below:
 """
 
     try:
-        response = model.generate_content(prompt)
+        response = _call(prompt, "generate_cover_letter_content")
         return response.text.strip()
     except Exception as e:
-        logger.error(f"Gemini cover letter generation failed: {e}")
+        logger.error("Cover letter generation failed: %s", e)
         raise

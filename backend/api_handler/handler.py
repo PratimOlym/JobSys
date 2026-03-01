@@ -304,7 +304,7 @@ def _get_resume_summaries() -> dict:
 def _generate_resume_summaries() -> dict:
     """POST /resumes/summarize — Generate and store summaries for all base resumes."""
     try:
-        from shared.gemini_client import summarize_resume
+        from shared.llm_client import summarize_resume
         from shared.parser import extract_text_from_file
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -366,7 +366,7 @@ def _match_resumes_to_jd(body: dict) -> dict:
     job_meta = body.get("job_meta", {})
 
     try:
-        from shared.gemini_client import match_jd_against_summaries
+        from shared.llm_client import match_jd_against_summaries
 
         summaries = load_resume_summaries()
         if not summaries:

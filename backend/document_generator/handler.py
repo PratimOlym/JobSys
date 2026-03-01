@@ -23,7 +23,7 @@ from shared import config
 from shared.db import list_jobs_by_status, update_job_documents, update_job_status, get_job
 from shared.storage import download_file, download_text, upload_optimized_resume, upload_cover_letter
 from shared.models import JobStatus, MatchResult
-from shared.gemini_client import generate_optimized_resume_content, generate_cover_letter_content
+from shared.llm_client import generate_optimized_resume_content, generate_cover_letter_content
 from document_generator.resume_generator import build_resume_docx
 from document_generator.cover_letter import build_cover_letter_docx
 from shared.parser import extract_text_from_file

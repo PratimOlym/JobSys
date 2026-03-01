@@ -122,3 +122,34 @@ class ResumeConfig:
     phone: str = ""
     linkedin: str = ""
     job_source_urls: List[str] = field(default_factory=list)
+
+
+@dataclass
+class TokenUsageRecord:
+    """A single LLM token-usage record stored in the ``jobsys-token-usage`` table.
+
+    One record is written per LLM API call.  The ``remaining_tokens`` field is
+    ``None`` for providers that do not expose quota information (Gemini, HF).
+    """
+    record_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    provider: str = ""         # "gemini" | "openai" | "huggingface"
+    model: str = ""            # e.g. "gpt-4o-mini"
+    operation: str = ""        # e.g. "summarize_resume"
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    remaining_tokens: Optional[int] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "record_id":         self.record_id,
+            "timestamp":         self.timestamp,
+            "provider":          self.provider,
+            "model":             self.model,
+            "operation":         self.operation,
+            "prompt_tokens":     self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens":      self.total_tokens,
+            "remaining_tokens":  self.remaining_tokens,
+        }

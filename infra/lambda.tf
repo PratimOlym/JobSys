@@ -5,8 +5,15 @@ locals {
   lambda_env_vars = {
     JOBS_TABLE_NAME          = aws_dynamodb_table.jobs.name
     CONFIG_TABLE_NAME        = aws_dynamodb_table.config.name
+    TOKEN_USAGE_TABLE_NAME   = aws_dynamodb_table.token_usage.name
     S3_BUCKET_NAME           = aws_s3_bucket.storage.id
     GEMINI_API_KEY_SECRET    = aws_secretsmanager_secret.gemini_api_key.name
+    OPENAI_API_KEY_SECRET    = aws_secretsmanager_secret.openai_api_key.name
+    HF_API_KEY_SECRET        = aws_secretsmanager_secret.hf_api_key.name
+    SSM_LLM_PROVIDER         = aws_ssm_parameter.llm_provider.name
+    SSM_GEMINI_MODEL         = aws_ssm_parameter.llm_gemini_model.name
+    SSM_OPENAI_MODEL         = aws_ssm_parameter.llm_openai_model.name
+    SSM_HF_MODEL             = aws_ssm_parameter.llm_hf_model.name
     RESUME_MATCHER_FUNCTION  = "${var.project_name}-resume-matcher"
     DOC_GENERATOR_FUNCTION   = "${var.project_name}-document-generator"
     JOB_SCANNER_FUNCTION     = "${var.project_name}-job-scanner"

@@ -47,3 +47,44 @@ resource "aws_dynamodb_table" "config" {
     Name = "${var.project_name}-config"
   }
 }
+
+# Token Usage table — one row per LLM API call for cost monitoring
+resource "aws_dynamodb_table" "token_usage" {
+  name         = "${var.project_name}-token-usage"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "record_id"
+  range_key    = "timestamp"
+
+  attribute {
+    name = "record_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "timestamp"
+    type = "S"
+  }
+
+  attribute {
+    name = "provider"
+    type = "S"
+  }
+
+  # GSI: query all records for a given provider sorted by time
+  global_secondary_index {
+    name            = "provider-timestamp-index"
+    hash_key        = "provider"
+    range_key       = "timestamp"
+    projection_type = "ALL"
+  }
+
+  # Automatically delete records older than 90 days to manage storage costs
+  ttl {
+    attribute_name = "ttl_epoch"
+    enabled        = true
+  }
+
+  tags = {
+    Name = "${var.project_name}-token-usage"
+  }
+}

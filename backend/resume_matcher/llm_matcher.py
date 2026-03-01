@@ -1,13 +1,14 @@
-"""LLM-powered semantic matching using Google Gemini.
+"""LLM-powered semantic matching.
 
-Combines keyword scoring with Gemini semantic analysis for
-a comprehensive resume-vs-JD matching score.
+Combines keyword scoring with LLM semantic analysis for a comprehensive
+resume-vs-JD matching score.  The active LLM provider is controlled by the
+``LLM_PROVIDER`` environment variable (gemini | openai | huggingface).
 """
 
 import logging
 from typing import Dict
 
-from shared.gemini_client import score_resume_vs_jd
+from shared.llm_client import score_resume_vs_jd
 from shared.models import MatchResult
 from resume_matcher.scorer import compute_keyword_score, compute_cosine_similarity
 
