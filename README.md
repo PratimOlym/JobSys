@@ -12,6 +12,9 @@ EventBridge (daily 1 AM) → Job Scanner Lambda → Resume Matcher Lambda → Do
 
 **Stack**: AWS Lambda, DynamoDB, S3, EventBridge, API Gateway, Google Gemini, React
 
+See [DOCS.md](./DOCS.md) for detailed documentation on project components and [COMMANDS.md](./COMMANDS.md) for a comprehensive list of commands for development and deployment.
+
+
 ## Quick Start
 
 ### Prerequisites
