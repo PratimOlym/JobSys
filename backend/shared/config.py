@@ -223,11 +223,15 @@ def record_token_usage(
     """
     try:
         record_id = str(uuid.uuid4())
-        timestamp = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
+        # TTL for DynamoDB (90 days from now)
+        ttl_epoch = int((now.timestamp() + (90 * 24 * 60 * 60)))
 
         item: dict = {
             "record_id": {"S": record_id},
             "timestamp":  {"S": timestamp},
+            "ttl_epoch":  {"N": str(ttl_epoch)},
             "provider":   {"S": provider},
             "model":      {"S": model},
             "operation":  {"S": operation},
