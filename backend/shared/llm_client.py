@@ -72,12 +72,41 @@ def _call(prompt: str, operation: str) -> LLMResponse:
 
 
 def _strip_fences(text: str) -> str:
-    """Remove markdown code fences (``` … ```) that some models add."""
+    """Robustly extract JSON from a string that might contain markdown fences or filler text."""
     text = text.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-        text = text.rsplit("```", 1)[0]
-    return text.strip()
+
+    # 1. Try to find JSON block in triple backticks first
+    import re
+    fence_pattern = r"```(?:json)?\s*(\{.*?\})\s*```"
+    match = re.search(fence_pattern, text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    
+    # 2. If no fences, try to find the first '{' and last '}'
+    else:
+        match = re.search(r"(\{.*\})", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+
+    # 3. Clean common JSON syntax errors before returning
+    return _fix_json_common_errors(text)
+
+
+def _fix_json_common_errors(text: str) -> str:
+    """Best-effort repair of common LLM JSON mistakes: trailing commas and unescaped quotes."""
+    if not isinstance(text, str) or not text:
+        return ""
+    
+    import re
+    
+    # Remove trailing commas in objects/arrays (e.g. [1, 2,] -> [1, 2])
+    text = re.sub(r',\s*([\]}])', r'\1', text)
+    
+    # Try to find unescaped double quotes inside values.
+    # We've removed the aggressive regex heuristic as it was escaping valid keys.
+    # Instead, we rely on the few-shot examples and provider-level JSON mode (if available).
+    
+    return text
 
 
 def _record_usage(response: LLMResponse, operation: str) -> None:
@@ -118,6 +147,16 @@ def summarize_resume(resume_name: str, resume_text: str) -> Dict:
         Dict with keys: resume_name, headline, total_experience_years, skills,
         key_strengths, education, summary_text.
     """
+    # Safety truncation to prevent hitting token limits or response truncation
+    # 12k chars (~3k tokens) is plenty for a high-quality summary.
+    raw_size = len(resume_text)
+    safe_limit = 12000
+    if raw_size > safe_limit:
+        logger.info("Truncating resume text from %d to %d chars", raw_size, safe_limit)
+        resume_text = resume_text[:safe_limit] + "... [truncated]"
+    else:
+        logger.debug("Summarizing resume text (%d chars)...", raw_size)
+
     prompt = f"""You are an expert resume analyst.
 
 Analyze the following resume and produce a concise, structured summary.
@@ -137,14 +176,35 @@ Return ONLY a JSON object with EXACTLY these fields:
 }}
 
 Respond with ONLY the JSON object, no other text.
+
+## Example Output Format
+{{
+    "headline": "Lead DevOps Engineer with 10+ years specializing in Kubernetes and AWS",
+    "total_experience_years": 12,
+    "skills": ["Kubernetes", "Terraform", "CI/CD", "AWS", "Go"],
+    "key_strengths": ["Enterprise Cloud Migration", "Infrastructure as Code", "Incident Response"],
+    "education": "M.S. in Computer Science, Stanford University",
+    "summary_text": "A highly experienced DevOps leader with a strong track record in enterprise-scale cloud architecture. Expert in automating complex infrastructure using Terraform and managing distributed systems on Kubernetes. Proven ability to lead cross-functional teams and deliver high-availability solutions."
+}}
+
+Important:
+- Use valid JSON format with double quotes for all keys and string values.
+- Ensure all double quotes *within* summary strings are escaped with a backslash (\").
+- Do NOT include any trailing commas.
+- Do NOT include any literal newlines inside JSON string values; use space or \"\\n\" instead.
 """
     try:
         response = _call(prompt, "summarize_resume")
-        data = json.loads(_strip_fences(response.text))
+        raw_text = response.text
+        stripped = _strip_fences(raw_text)
+        data = json.loads(stripped)
         data["resume_name"] = resume_name
         return data
     except Exception as e:
-        logger.error("Resume summarization failed for '%s': %s", resume_name, e)
+        logger.error(
+            "Resume summarization JSON parse failed for '%s'. Error: %s. Raw response: %s",
+            resume_name, str(e), raw_text if 'raw_text' in locals() else "N/A"
+        )
         return {
             "resume_name": resume_name,
             "headline": "Summary generation failed",
@@ -223,11 +283,16 @@ Important:
 
     try:
         response = _call(prompt, "match_jd_against_summaries")
-        results = json.loads(_strip_fences(response.text))
+        raw_text = response.text
+        stripped = _strip_fences(raw_text)
+        results = json.loads(stripped)
         results.sort(key=lambda x: x.get("overall_score", 0), reverse=True)
         return results
     except Exception as e:
-        logger.error("JD matching failed: %s", e)
+        logger.error(
+            "JD matching JSON parse failed. Error: %s. Raw response: %s",
+            str(e), raw_text if 'raw_text' in locals() else "N/A"
+        )
         return [
             {
                 "resume_name": s.get("resume_name", f"Resume_{i}"),
@@ -284,7 +349,9 @@ Respond with ONLY the JSON object, no other text.
 
     try:
         response = _call(prompt, "score_resume_vs_jd")
-        data = json.loads(_strip_fences(response.text))
+        raw_text = response.text
+        stripped = _strip_fences(raw_text)
+        data = json.loads(stripped)
         return MatchResult(
             resume_name="",  # Filled in by caller
             overall_score=float(data.get("overall_score", 0)),
@@ -295,7 +362,10 @@ Respond with ONLY the JSON object, no other text.
             recommendation=data.get("recommendation", ""),
         )
     except Exception as e:
-        logger.error("Resume scoring failed: %s", e)
+        logger.error(
+            "Resume scoring JSON parse failed. Error: %s. Raw response: %s",
+            str(e), raw_text if 'raw_text' in locals() else "N/A"
+        )
         return MatchResult(
             resume_name="",
             overall_score=0,
@@ -382,9 +452,14 @@ Respond with ONLY the JSON object, no other text.
 
     try:
         response = _call(prompt, "generate_optimized_resume_content")
-        return json.loads(_strip_fences(response.text))
+        raw_text = response.text
+        stripped = _strip_fences(raw_text)
+        return json.loads(stripped)
     except Exception as e:
-        logger.error("Resume generation failed: %s", e)
+        logger.error(
+            "Resume generation JSON parse failed. Error: %s. Raw response: %s",
+            str(e), raw_text if 'raw_text' in locals() else "N/A"
+        )
         raise
 
 

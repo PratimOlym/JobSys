@@ -73,7 +73,12 @@ def parse_pdf_bytes(pdf_bytes: bytes) -> str:
             page_text = page.extract_text()
             if page_text:
                 text_parts.append(page_text)
-        return "\n\n".join(text_parts)
+        
+        text = "\n\n".join(text_parts)
+        # Collapse multiple newlines (3+) to just 2, and normalize spaces
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r' +', ' ', text)
+        return text.strip()
     except ImportError:
         logger.warning("PyPDF2 not available — PDF parsing skipped")
         return ""

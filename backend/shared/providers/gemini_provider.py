@@ -49,7 +49,15 @@ class GeminiProvider(LLMProvider):
 
     def generate(self, prompt: str) -> LLMResponse:
         """Call Gemini and return a standardised LLMResponse."""
-        response = self._client.generate_content(prompt)
+        # Use JSON mode if the prompt mentions JSON
+        generation_config = {}
+        if "json" in prompt.lower():
+            generation_config["response_mime_type"] = "application/json"
+
+        response = self._client.generate_content(
+            prompt,
+            generation_config=generation_config
+        )
 
         usage = _extract_usage(response)
         text = response.text.strip()
