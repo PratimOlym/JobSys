@@ -69,20 +69,34 @@ class HuggingFaceProvider(LLMProvider):
             text = result.choices[0].message.content or ""
             usage = _estimate_usage_chat(result, prompt)
         except Exception as chat_exc:
-            logger.debug(
-                "chat_completion failed for %s (%s); falling back to text_generation",
+            logger.warning(
+                "chat_completion failed for %s: %s. Falling back to text_generation...",
                 self._model_name,
-                chat_exc,
+                str(chat_exc),
             )
             # Fallback: text-generation endpoint
-            result = self._client.text_generation(
-                prompt,
-                max_new_tokens=2048,
-                temperature=0.2,
-                return_full_text=False,
-            )
-            text = result if isinstance(result, str) else str(result)
-            usage = _estimate_usage_text(prompt, text)
+            try:
+                result = self._client.text_generation(
+                    prompt,
+                    max_new_tokens=2048,
+                    temperature=0.2,
+                    return_full_text=False,
+                )
+                text = result if isinstance(result, str) else str(result)
+                usage = _estimate_usage_text(prompt, text)
+            except Exception as text_exc:
+                error_msg = str(text_exc)
+                if "task text-generation" in error_msg and "Supported task: conversational" in error_msg:
+                    logger.error(
+                        "HuggingFace model %s requires 'conversational' task but chat_completion failed. "
+                        "Original chat error: %s",
+                        self._model_name,
+                        str(chat_exc)
+                    )
+                    # Re-raise the original chat error as it's more likely the root cause
+                    # than the task mismatch from the fallback.
+                    raise RuntimeError(f"Chat completion failed: {str(chat_exc)}") from text_exc
+                raise text_exc
 
         text = text.strip()
         logger.debug(
