@@ -2,18 +2,32 @@
 
 An AWS serverless system that automates job application preparation: scans job listings, matches resumes, generates ATS-optimized documents, and provides a web dashboard.
 
-## Architecture
+## Overview
+
+JobSys is a comprehensive tool developed to streamline the job application process. It automates the extraction of job details from URLs, matches them against your base resumes using LLMs, and generates customized, ATS-friendly documents for each application.
+
+## Key Components
+
+- **`job_scanner`**: Automatically scrapes job listings from configured URLs and registers new jobs in DynamoDB.
+- **`resume_matcher`**: Scores base resumes against Job Descriptions using advanced LLM-based semantic matching.
+- **`document_generator`**: Extracts job-specific data and generates optimized DOCX resumes and cover letters.
+- **`api_handler`**: Provides a REST API for the frontend dashboard.
+- **`shared`**: Common utilities for S3, DynamoDB, and the multi-provider LLM abstraction layer.
+
+## Architecture & Stack
 
 ```
 EventBridge (daily 1 AM) → Job Scanner Lambda → Resume Matcher Lambda → Document Generator Lambda
-                                                                              ↓
-                                                       API Gateway → API Handler Lambda → React Dashboard
+                                                                               ↓
+                                                        API Gateway → API Handler Lambda → React Dashboard
 ```
 
-**Stack**: AWS Lambda, DynamoDB, S3, EventBridge, API Gateway, Google Gemini, React
+- **Backend**: AWS Lambda (Python 3.11+), DynamoDB, S3, EventBridge, API Gateway.
+- **Frontend**: React (Vite), Framer Motion, Vanilla CSS.
+- **LLM Layer**: Multi-provider abstraction supporting **Google Gemini** (Primary), OpenAI, and HuggingFace. Provider selection is managed via SSM Parameters.
+- **Infrastructure**: Terraform (IaC).
 
-See [DOCS.md](./DOCS.md) for detailed documentation on project components and [COMMANDS.md](./COMMANDS.md) for a comprehensive list of commands for development and deployment.
-
+See [COMMANDS.md](./COMMANDS.md) for a comprehensive list of commands for development and deployment. Detailed functional requirements are documented in [requirements.md](./requirements.md).
 
 ## Quick Start
 
@@ -61,16 +75,18 @@ aws s3 sync dist/ s3://jobsys-frontend/
 ## Project Structure
 
 ```
-backend/                 # Lambda functions & shared code
-├── shared/              # DB, S3, Gemini client, config
-├── job_scanner/         # Scrapes & registers new jobs
-├── resume_matcher/      # Scores resumes against JDs
-├── document_generator/  # Generates optimized DOCX files
+backend/                 # Python Lambda functions & shared logic
+├── shared/              # DB, S3, LLM clients, configuration
+├── job_scanner/         # Scraping & registration
+├── resume_matcher/      # Scoring & matching
+├── document_generator/  # Generation of DOCX/PDF
 └── api_handler/         # REST API for the dashboard
 
 frontend/                # React dashboard (Vite)
 
-infra/                   # Terraform IaC
+infra/                   # Terraform infrastructure code
+
+scripts/                 # Automation scripts (PowerShell)
 ```
 
 ## Status Flow
